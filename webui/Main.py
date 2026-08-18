@@ -2107,14 +2107,16 @@ def _render_video_settings(panel, params):
                 (tr("Random"), "random"),
             ]
             video_sources = [
+                (tr("Stock library"), "stock"),
                 (tr("Generated"), "generated"),
                 (tr("Local file"), "local"),
             ]
 
-            saved_video_source_name = config.app.get("video_source", "generated")
-            if saved_video_source_name not in {"generated", "local"}:
-                # 旧配置里的 pexels/pixabay/coverr 已无对应后端，统一落到生成式。
-                saved_video_source_name = "generated"
+            saved_video_source_name = config.app.get("video_source", "stock")
+            if saved_video_source_name not in {"stock", "generated", "local"}:
+                # 旧配置里的 pexels/pixabay/coverr 统一落到库存搜索（同样是 Pixabay，
+                # 只是改走 dlazy 的 search_video）。
+                saved_video_source_name = "stock"
 
             params.video_source = stable_selectbox(
                 tr("Video Source"),
@@ -3261,7 +3263,7 @@ def _render_generation_controls(
             st.error(tr("Video Script and Subject Cannot Both Be Empty"))
             st.stop()
 
-        if params.video_source not in ["generated", "local"]:
+        if params.video_source not in ["stock", "generated", "local"]:
             _remove_active_generation_task(task_id)
             st.error(tr("Please Select a Valid Video Source"))
             st.stop()

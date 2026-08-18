@@ -209,9 +209,9 @@ Output and exit status:
     material_group = parser.add_argument_group("materials and pipeline")
     material_group.add_argument(
         "--video-source",
-        default="generated",
-        choices=["generated", "local"],
-        help="footage source: generate clips with a dlazy video model, or use local files",
+        default="stock",
+        choices=["stock", "generated", "local"],
+        help="footage source: stock library search (cheap, instant), generated clips (metered per clip), or local files",
     )
     material_group.add_argument(
         "--video-materials",

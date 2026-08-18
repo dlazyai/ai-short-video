@@ -252,6 +252,7 @@
     "Music Prompt": "Music Prompt",
     "Music Prompt Help": "Describe the mood you want, e.g. calm cinematic piano",
     "Generated Music Multiple Videos Warning": "Music is generated once per video; generating several videos multiplies the cost",
-    "Generated BGM Fallback Warning": "Background music generation failed for video {index}; the video was kept without music"
+    "Generated BGM Fallback Warning": "Background music generation failed for video {index}; the video was kept without music",
+    "Stock library": "Stock library"
   }
 }

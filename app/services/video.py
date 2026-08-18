@@ -651,10 +651,18 @@ def combine_videos(
                 if clip_ratio == video_ratio:
                     clip = clip.resized(new_size=(video_width, video_height))
                 else:
-                    if clip_ratio > video_ratio:
-                        scale_factor = video_width / clip_w
-                    else:
-                        scale_factor = video_height / clip_h
+                    # 取较大的一边缩放，让画面填满目标画幅；
+                    # CompositeVideoClip 以 background 的尺寸为准，
+                    # 超出的部分自然被裁掉。
+                    #
+                    # 早先取的是较小的一边，等于居中留黑边：2560x1440 的
+                    # 横屏素材放进 1080x1920 竖屏工程，画面只占约三分之一
+                    # 高度，其余全是黑底。库存素材以横屏为主，而竖屏是短
+                    # 视频的默认画幅，两者相遇就是每条片子都顶着大黑边。
+                    # 生成式素材的画幅由模型按 ratio 出，走不到这个分支。
+                    scale_factor = max(
+                        video_width / clip_w, video_height / clip_h
+                    )
 
                     new_width = int(clip_w * scale_factor)
                     new_height = int(clip_h * scale_factor)

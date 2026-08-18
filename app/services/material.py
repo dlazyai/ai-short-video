@@ -350,20 +350,167 @@ def generate_video_clip(
     )
 
 
+# ---------------------------------------------------------------------------
+# Stock footage
+#
+# Pixabay search through dlazy: 1 credit and near-instant, versus a metered
+# generation that takes minutes per clip. This is the default source;
+# generation stays available for scripts the stock library cannot match.
+# ---------------------------------------------------------------------------
+
+# Pixabay rejects per_page outside 3-200; asking for 2 answers 400.
+_STOCK_MIN_PER_PAGE = 3
+_STOCK_PER_PAGE = 10
+_ASPECT_TOLERANCE = 0.35
+
+
+def _pick_stock_variant(hit: dict, video_aspect: VideoAspect):
+    """Choose the download variant closest to the requested aspect ratio.
+
+    Pixabay returns each clip in four sizes. Preferring a variant whose aspect
+    already matches avoids letterboxing during assembly; `medium` comes first
+    because `large` is often a 4K file well over 40 MB.
+    """
+    variants = hit.get("videos") or {}
+    try:
+        w, h = video_aspect.to_resolution()
+        wanted = w / h
+    except Exception:
+        wanted = 9 / 16
+
+    best = None
+    for key in ("medium", "large", "small", "tiny"):
+        v = variants.get(key)
+        if not v or not v.get("url"):
+            continue
+        vw, vh = float(v.get("width") or 0), float(v.get("height") or 0)
+        if vw <= 0 or vh <= 0:
+            continue
+        delta = abs((vw / vh) - wanted)
+        if delta <= _ASPECT_TOLERANCE:
+            return v
+        if best is None or delta < best[0]:
+            best = (delta, v)
+    return best[1] if best else None
+
+
+def search_stock_videos(
+    search_term: str,
+    video_aspect: VideoAspect,
+    minimum_duration: int,
+) -> List[MaterialInfo]:
+    """Search the stock library for one term and return usable clips."""
+    try:
+        output = dlazy_client.run_tool(
+            "search_video",
+            {
+                "query": search_term,
+                "videoType": "all",
+                "page": 1,
+                "perPage": max(_STOCK_MIN_PER_PAGE, _STOCK_PER_PAGE),
+            },
+        )
+    except Exception as e:
+        logger.error(f"stock search failed for '{search_term}': {e}")
+        return []
+
+    items: List[MaterialInfo] = []
+    for hit in (output or {}).get("hits") or []:
+        duration = int(hit.get("duration") or 0)
+        if duration < minimum_duration:
+            continue
+        variant = _pick_stock_variant(hit, video_aspect)
+        if not variant:
+            continue
+        items.append(
+            MaterialInfo(
+                provider="pixabay",
+                url=variant["url"],
+                duration=duration,
+                source_info={
+                    "provider": "pixabay",
+                    "search_term": search_term,
+                    "asset_id": str(hit.get("id") or ""),
+                    "page_url": hit.get("pageURL") or "",
+                    "creator": hit.get("user") or "",
+                },
+            )
+        )
+    logger.info(f"found {len(items)} stock clip(s) for '{search_term}'")
+    return items
+
+
+def _download_stock_videos(
+    task_id: str,
+    search_terms: List[str],
+    video_aspect: VideoAspect,
+    video_concat_mode: VideoConcatMode,
+    audio_duration: float,
+    max_clip_duration: int,
+    match_script_order: bool,
+    material_directory: str,
+) -> List[str]:
+    """Collect stock clips until the narration is covered."""
+    candidates: List[MaterialInfo] = []
+    seen = set()
+    for term in search_terms:
+        for item in search_stock_videos(term, video_aspect, max_clip_duration):
+            if item.url in seen:
+                continue
+            seen.add(item.url)
+            candidates.append(item)
+
+    if not candidates:
+        logger.error("stock search returned no usable clips")
+        return []
+
+    concat_mode_value = getattr(video_concat_mode, "value", video_concat_mode)
+    if not match_script_order and concat_mode_value == VideoConcatMode.random.value:
+        random.shuffle(candidates)
+
+    video_paths: List[str] = []
+    material_sources: List[dict] = []
+    total = 0.0
+    for item in candidates:
+        try:
+            saved = save_video(video_url=item.url, save_dir=material_directory)
+        except Exception as e:
+            logger.error(f"failed to download stock clip: {type(e).__name__}: {e}")
+            continue
+        if not saved:
+            continue
+        video_paths.append(saved)
+        try:
+            material_sources.append(_material_source_record(item, saved))
+        except Exception as source_error:
+            logger.warning(
+                "failed to prepare material source record: "
+                f"error={type(source_error).__name__}"
+            )
+        total += min(max_clip_duration, item.duration)
+        if total >= audio_duration:
+            break
+
+    logger.success(f"downloaded {len(video_paths)} stock clip(s)")
+    _persist_material_sources(task_id, material_sources)
+    return video_paths
+
+
 def download_videos(
     task_id: str,
     search_terms: List[str],
-    source: str = "",
+    source: str = "stock",
     video_aspect: VideoAspect = VideoAspect.portrait,
     video_concat_mode: VideoConcatMode = VideoConcatMode.random,
     audio_duration: float = 0.0,
     max_clip_duration: int = 5,
     match_script_order: bool = False,
 ) -> List[str]:
-    """Produce the footage the timeline needs, generating one clip per term.
+    """Produce the footage the timeline needs.
 
-    Signature is unchanged so `task.py` keeps working; `source` is accepted and
-    ignored now that there is a single footage backend.
+    `source` selects the backend: "stock" searches the library through dlazy
+    (1 credit, immediate), "generated" renders one clip per search term with a
+    dlazy video model (metered per clip, minutes each).
     """
     material_directory = config.app.get("material_directory", "").strip()
     if material_directory == "task":
@@ -373,8 +520,20 @@ def download_videos(
 
     terms = [t for t in (search_terms or []) if str(t).strip()]
     if not terms:
-        logger.error("no search terms to generate footage from")
+        logger.error("no search terms to source footage from")
         return []
+
+    if source != "generated":
+        return _download_stock_videos(
+            task_id=task_id,
+            search_terms=terms,
+            video_aspect=video_aspect,
+            video_concat_mode=video_concat_mode,
+            audio_duration=audio_duration,
+            max_clip_duration=max_clip_duration,
+            match_script_order=match_script_order,
+            material_directory=material_directory,
+        )
 
     clip_seconds = int(_clip_duration_value(max_clip_duration))
     needed = max(1, math.ceil((audio_duration or 0) / clip_seconds))
@@ -386,8 +545,8 @@ def download_videos(
     # when the timeline needs more clips than there are terms.
     plan = [terms[i % len(terms)] for i in range(needed)]
 
-    video_paths: list[str] = []
-    material_sources: list[dict[str, Any]] = []
+    video_paths: List[str] = []
+    material_sources: List[dict] = []
     for search_term in plan:
         item = generate_video_clip(
             search_term=search_term,

@@ -24,7 +24,7 @@ anyone comparing the two trees can see exactly what moved.
 | 21 LLM providers (moonshot, openai, gemini, deepseek, qwen, azure, volcengine, grok, minimax, mimo, cloudflare, modelscope, aihubmix, aimlapi, evolink, ollama, oneapi, litellm, groq, pollinations) and `app/models/llm_provider.py` | Replaced by a single dlazy text model |
 | 8 TTS backends (Azure v1/v2, SiliconFlow, Gemini, MiMo, MiniMax, ElevenLabs, Chatterbox) and the bundled `edge-tts` path | Replaced by dlazy TTS |
 | `faster-whisper` and the local Whisper model download | Local model — replaced by dlazy speech-to-text |
-| Pexels / Pixabay / Coverr stock-footage search | Replaced by clip generation with a dlazy video model |
+| Direct Pexels / Pixabay / Coverr API keys and clients | Stock search now goes through dlazy's `search_video`, so no per-vendor key is needed; Coverr and the direct Pexels client are gone |
 | `app/services/twelvelabs.py` (Marengo semantic re-ranking) | Third-party video-understanding models |
 | `app/services/sonilo.py`, `app/services/elevenlabs_music.py` | Third-party music services — replaced by `app/services/music.py` |
 | `app/services/upload_post.py` and the ~618-line cross-posting pipeline | Third-party publishing to TikTok / Instagram / YouTube Shorts |
@@ -63,10 +63,12 @@ carried over apart from the naming changes above.
 
 Consequences of routing everything through one provider, not bugs:
 
-- **Footage is generated, not searched.** Upstream pulled free stock clips in
-  seconds. Here each search term becomes a generated clip — better matched to
-  the script, but metered per clip and far slower. Local footage
-  (`video_source = "local"`) remains available and free.
+- **Stock footage costs a credit per search.** Upstream queried Pexels /
+  Pixabay / Coverr with your own API keys; here the same Pixabay library is
+  reached through dlazy's `search_video`, which is metered but needs no
+  per-vendor key. Coverr is gone. `video_source = "generated"` renders clips
+  with a video model instead — better matched to the script, but billed per
+  clip and minutes each. Local footage remains free.
 - **Transcription accepts English or Chinese only.** dlazy's `fun-asr` and
   `elevenlabs-stt` take `zh` or `en`; upstream's local Whisper handled more.
 - **No voice cloning and no per-provider voice catalogues.** Dubbing uses the

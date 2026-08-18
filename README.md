@@ -14,8 +14,9 @@ Give it a subject (or your own script), and the pipeline runs:
 
 1. **Script** — an LLM writes the narration, then extracts the visual search
    terms that drive the footage
-2. **Footage** — one clip is generated per search term, in the aspect ratio you
-   picked
+2. **Footage** — clips are pulled from the stock library by search term, in
+   the aspect ratio you picked. Switch the source to generate them with a
+   video model instead when the library has nothing close enough
 3. **Voice-over** — TTS renders the narration
 4. **Subtitles** — the rendered voice-over is transcribed back, so the timing
    comes from the actual audio rather than an estimate
@@ -66,23 +67,26 @@ actually run:
 | LLM | `claude-sonnet-5`, `qwen3.8-max`, `kimi-k3` |
 | Speech-to-text | `fun-asr`, `elevenlabs-stt` |
 | Voice-over | `qwen-tts`, `doubao-tts`, `elevenlabs-tts` |
-| Footage | `seedance-2.0-fast`, `seedance-2.0`, `seedance-2.5`, `veo-3.1-fast`, `kling-v3`, `wan2.7` |
+| Footage source | `stock` (default), `generated`, `local` |
+| Footage model (when generating) | `seedance-2.0-fast`, `seedance-2.0`, `seedance-2.5`, `veo-3.1-fast`, `kling-v3`, `wan2.7` |
 | Music | `elevenlabs-music`, `suno-music`, `search_audio` |
 
 Everything else lives in `config.toml`, which the settings page writes for you.
 
 ## Cost and speed
 
-Footage generation is the expensive part: it is metered per clip, and a clip
-takes minutes rather than seconds. The pipeline therefore computes exactly how
-many clips the narration needs instead of over-fetching, and caches clips by
-search term so a retried task does not pay twice.
+Footage is where the cost lives, so the source is a deliberate choice:
 
-Two ways to keep it cheap:
+| `video_source` | Cost | Speed | When |
+| --- | --- | --- | --- |
+| `stock` (default) | 1 credit per search | Immediate | Almost always |
+| `generated` | Metered per clip | Minutes per clip | The library has nothing close enough to the script |
+| `local` | Free | Immediate | You already have the footage |
 
-- Pick a fast footage model (`seedance-2.0-fast` is the default).
-- Set `video_source = "local"` and point `material_directory` at your own
-  clips. Nothing is generated, and the rest of the pipeline works unchanged.
+When generating, the pipeline computes exactly how many clips the narration
+needs instead of over-fetching, and caches clips by search term so a retried
+task does not pay twice. Pick a fast model — `seedance-2.0-fast` is the
+default.
 
 For background music, `search_audio` searches a royalty-free catalogue instead
 of generating a track — far cheaper than `elevenlabs-music` or `suno-music`.
@@ -99,8 +103,9 @@ python cli.py --video-subject "how compound interest works"
 
 Honest about what this fork gives up by moving everything to one provider:
 
-- **Footage is generated, not searched.** Better matched to the script than
-  stock clips, but slower and metered. Local footage is still free.
+- **Generated footage is slow and metered.** It matches the script better
+  than stock clips, but costs per clip and takes minutes each. Stock search
+  is the default for that reason; local footage is free.
 - **Transcription accepts English or Chinese only.** The *target* language for
   the script is free-form.
 - **No voice cloning.** Dubbing uses the preset voices each model exposes.

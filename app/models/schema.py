@@ -87,7 +87,7 @@ class VideoParams(BaseModel):
     match_materials_to_script: bool = False
     video_count: int = Field(default=1, ge=1)
 
-    video_source: Optional[str] = "generated"
+    video_source: Optional[str] = "stock"
     video_materials: Optional[List[MaterialInfo]] = (
         None  # Materials used to generate the video
     )

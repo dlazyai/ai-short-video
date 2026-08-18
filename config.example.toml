@@ -66,9 +66,12 @@ tls_verify = true
 # Video Materials / 视频素材
 # -----------------------------------------------------------------------------
 
-# "generated" 用 dlazy 视频模型按关键词生成片段；"local" 使用本地素材目录。
-# Available values: "generated", "local".
-video_source = "generated"
+# "stock"     经 dlazy 检索 Pixabay 素材库：1 积分、秒回，默认。
+# "generated" 用 dlazy 视频模型按关键词生成片段：按片计费、每片数分钟，
+#             画面更贴合文案，库里找不到合适素材时用。
+# "local"     使用 material_directory 里的本地素材，不产生任何调用。
+# Available values: "stock", "generated", "local".
+video_source = "stock"
 
 # Directory holding local footage. Set to "task" to use each task's own folder.
 # Example: material_directory = "/path/to/videos"

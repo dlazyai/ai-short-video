@@ -252,6 +252,7 @@
     "Music Prompt": "配乐描述",
     "Music Prompt Help": "描述想要的氛围，例如「舒缓的电影感钢琴」",
     "Generated Music Multiple Videos Warning": "配乐按视频逐条生成，一次生成多支视频会成倍计费",
-    "Generated BGM Fallback Warning": "第 {index} 支视频的配乐生成失败，已保留无配乐版本"
+    "Generated BGM Fallback Warning": "第 {index} 支视频的配乐生成失败，已保留无配乐版本",
+    "Stock library": "素材库检索"
   }
 }
