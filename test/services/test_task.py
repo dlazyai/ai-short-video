@@ -1,0 +1,436 @@
+import unittest
+import os
+import shutil
+import sys
+import tempfile
+from concurrent.futures import Future
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
+
+# add project root to python path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from app.services import task as tm
+from app.models.schema import MaterialInfo, VideoParams
+from app.services.state import MemoryState, RedisState
+from app.utils import utils
+
+resources_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources")
+RUN_INTEGRATION_TESTS = os.environ.get("MPT_RUN_INTEGRATION_TESTS", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+class TestTaskService(unittest.TestCase):
+    def test_generate_script_forwards_advanced_prompt_options(self):
+        """
+        任务生成入口和 WebUI/API 共用 VideoParams。这里验证自动生成文案时，
+        高级提示词参数会继续传到 LLM 服务层，避免只在 /scripts 接口生效。
+        """
+        params = VideoParams(
+            video_subject="咖啡",
+            video_script="",
+            video_language="zh-CN",
+            paragraph_number=2,
+            video_script_prompt="语气轻松",
+            custom_system_prompt="Only write short narration.",
+        )
+
+        with patch.object(tm.llm, "generate_script", return_value="生成的文案") as generate:
+            result = tm.generate_script("task-id", params)
+
+        self.assertEqual(result, "生成的文案")
+        generate.assert_called_once_with(
+            video_subject="咖啡",
+            language="zh-CN",
+            paragraph_number=2,
+            video_script_prompt="语气轻松",
+            custom_system_prompt="Only write short narration.",
+        )
+
+    def test_generate_final_videos_forwards_clip_speed(self):
+        """任务编排层必须把用户选择的画面速度传给视频合成服务。"""
+        params = VideoParams(
+            video_subject="test",
+            video_count=1,
+            video_clip_speed=1.25,
+        )
+
+        with (
+            patch.object(tm.video, "combine_videos") as combine_videos,
+            patch.object(tm.video, "generate_video"),
+            patch.object(tm.sm.state, "update_task"),
+        ):
+            tm.generate_final_videos(
+                task_id="clip-speed-task",
+                params=params,
+                downloaded_videos=["material.mp4"],
+                audio_file="audio.mp3",
+                subtitle_path="",
+                audio_duration=5,
+            )
+
+        self.assertEqual(combine_videos.call_args.kwargs["clip_speed"], 1.25)
+
+
+
+
+
+
+
+
+
+
+
+
+    def test_generate_terms_uses_script_order_mode_when_enabled(self):
+        """
+        默认模式不受影响；只有用户显式开启素材按文案顺序匹配时，任务层才
+        要求 LLM 生成有序关键词，并适当增加关键词数量以覆盖更多脚本片段。
+        """
+        params = VideoParams(
+            video_subject="城市通勤",
+            video_script="",
+            match_materials_to_script=True,
+        )
+
+        with patch.object(tm.llm, "generate_terms", return_value=["city", "train"]) as generate:
+            result = tm.generate_terms("task-id", params, "先城市，再地铁")
+
+        self.assertEqual(result, ["city", "train"])
+        generate.assert_called_once_with(
+            video_subject="城市通勤",
+            video_script="先城市，再地铁",
+            amount=8,
+            match_script_order=True,
+        )
+
+    def test_start_stops_before_materials_when_term_provider_fails(self):
+        """
+        关键词 Provider 失败后，任务必须立即结束，不能继续生成音频或下载素材。
+
+        这里从任务入口覆盖完整的错误传播路径，避免未来只修服务层返回类型，
+        却又在任务编排层把空列表转换成其它真值后继续执行外部请求。
+        """
+        params = VideoParams(
+            video_subject="startup story",
+            video_script="A short startup story.",
+        )
+        state = MemoryState()
+
+        with (
+            patch.object(
+                tm.llm,
+                "_generate_response",
+                return_value="Error: invalid API key",
+            ),
+            patch.object(tm, "generate_audio") as generate_audio,
+            patch.object(tm, "get_video_materials") as get_video_materials,
+            patch.object(tm.sm, "state", state),
+        ):
+            result = tm.start("term-provider-error", params)
+
+        generate_audio.assert_not_called()
+        get_video_materials.assert_not_called()
+        failed_task = state.get_task("term-provider-error")
+        self.assertEqual(result, failed_task)
+        self.assertEqual(failed_task["state"], tm.const.TASK_STATE_FAILED)
+        self.assertEqual(failed_task["failed_stage"], "terms")
+        self.assertTrue(failed_task["error"])
+    
+    def test_generate_audio_uses_custom_file_inside_task_directory(self):
+        task_id = "test-custom-audio-safe"
+        task_dir = utils.task_dir(task_id)
+        custom_audio_file = os.path.join(task_dir, "custom-audio.mp3")
+        with open(custom_audio_file, "wb") as audio:
+            audio.write(b"fake audio")
+
+        params = VideoParams(
+            video_subject="custom audio",
+            video_script="",
+            custom_audio_file=custom_audio_file,
+            voice_name="test-voice",
+        )
+
+        try:
+            with (
+                patch.object(tm.voice, "tts") as tts,
+                patch.object(tm.voice, "get_audio_duration", return_value=7),
+            ):
+                audio_file, audio_duration, sub_maker = tm.generate_audio(
+                    task_id, params, "script"
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertEqual(audio_file, os.path.realpath(custom_audio_file))
+        self.assertEqual(audio_duration, 7)
+        self.assertIsNone(sub_maker)
+        tts.assert_not_called()
+
+    def test_generate_audio_accepts_server_side_custom_file(self):
+        task_id = "test-custom-audio-server-side"
+        task_dir = utils.task_dir(task_id)
+
+        with tempfile.NamedTemporaryFile(suffix=".mp3") as server_audio:
+            server_audio.write(b"fake audio")
+            server_audio.flush()
+            params = VideoParams(
+                video_subject="custom audio",
+                video_script="",
+                custom_audio_file=server_audio.name,
+                voice_name="test-voice",
+            )
+
+            try:
+                with (
+                    patch.object(tm.voice, "tts") as tts,
+                    patch.object(tm.voice, "get_audio_duration", return_value=6),
+                ):
+                    audio_file, audio_duration, result_sub_maker = tm.generate_audio(
+                        task_id, params, "script"
+                    )
+            finally:
+                shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertEqual(audio_file, os.path.realpath(server_audio.name))
+        self.assertEqual(audio_duration, 6)
+        self.assertIsNone(result_sub_maker)
+        tts.assert_not_called()
+
+    def test_generate_audio_rejects_missing_custom_file_without_tts(self):
+        task_id = "test-custom-audio-missing"
+        task_dir = utils.task_dir(task_id)
+        missing_audio_file = os.path.join(task_dir, "missing.mp3")
+        params = VideoParams(
+            video_subject="custom audio",
+            video_script="",
+            custom_audio_file=missing_audio_file,
+            voice_name="test-voice",
+        )
+        state = MemoryState()
+
+        try:
+            with (
+                patch.object(tm.voice, "tts") as tts,
+                patch.object(tm.sm, "state", state),
+            ):
+                audio_file, audio_duration, result_sub_maker = tm.generate_audio(
+                    task_id, params, "script"
+                )
+        finally:
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        self.assertIsNone(audio_file)
+        self.assertIsNone(audio_duration)
+        self.assertIsNone(result_sub_maker)
+        tts.assert_not_called()
+        failed_task = state.get_task(task_id)
+        self.assertEqual(failed_task["failed_stage"], "audio")
+        self.assertIn("does not exist", failed_task["error"])
+
+
+
+
+    def test_start_returns_each_intermediate_result(self):
+        """
+        API 的 script、terms、audio、subtitle 和 materials 模式共用同一条任务
+        流水线。每个提前停止点都要返回对应产物，同时不能误执行后续阶段。
+        """
+        expected_results = {
+            "script": {"script": "generated script"},
+            "terms": {
+                "script": "generated script",
+                "terms": ["coffee", "morning"],
+            },
+            "audio": {"audio_file": "audio.mp3", "audio_duration": 5},
+            "subtitle": {"subtitle_path": "subtitle.srt"},
+            "materials": {"materials": ["clip.mp4"]},
+        }
+
+        for stop_at, expected in expected_results.items():
+            with self.subTest(stop_at=stop_at):
+                params = VideoParams(video_subject="Coffee")
+                with (
+                    patch.object(tm, "generate_script", return_value="generated script"),
+                    patch.object(
+                        tm,
+                        "generate_terms",
+                        return_value=["coffee", "morning"],
+                    ),
+                    patch.object(tm, "save_script_data"),
+                    patch.object(
+                        tm,
+                        "generate_audio",
+                        return_value=("audio.mp3", 5, object()),
+                    ),
+                    patch.object(
+                        tm,
+                        "generate_subtitle",
+                        return_value="subtitle.srt",
+                    ),
+                    patch.object(
+                        tm,
+                        "get_video_materials",
+                        return_value=["clip.mp4"],
+                    ),
+                    patch.object(tm, "generate_final_videos") as generate_final,
+                    patch.object(tm.sm.state, "update_task"),
+                ):
+                    result = tm.start(
+                        f"intermediate-{stop_at}", params, stop_at=stop_at
+                    )
+
+                self.assertEqual(result, expected)
+                generate_final.assert_not_called()
+
+
+    def test_start_marks_pipeline_failures(self):
+        """
+        音频、素材和最终视频任一关键产物缺失时都必须进入失败状态，不能把
+        不完整任务误报为完成。三个场景复用相同 mock，仅替换故障阶段。
+        """
+        failure_cases = {
+            "audio": (
+                (None, None, None),
+                ["clip.mp4"],
+                (["final.mp4"], ["combined.mp4"], []),
+            ),
+            "materials": (
+                ("audio.mp3", 5, object()),
+                None,
+                (["final.mp4"], ["combined.mp4"], []),
+            ),
+            "video": (("audio.mp3", 5, object()), ["clip.mp4"], ([], [], [])),
+        }
+
+        for stage, failure_results in failure_cases.items():
+            with self.subTest(stage=stage):
+                audio_result, materials_result, videos_result = failure_results
+                params = VideoParams(video_subject="Coffee")
+                state = MemoryState()
+                with (
+                    patch.object(tm, "generate_script", return_value="generated script"),
+                    patch.object(tm, "generate_terms", return_value=["coffee"]),
+                    patch.object(tm, "save_script_data"),
+                    patch.object(tm, "generate_audio", return_value=audio_result),
+                    patch.object(tm, "generate_subtitle", return_value="subtitle.srt"),
+                    patch.object(
+                        tm,
+                        "get_video_materials",
+                        return_value=materials_result,
+                    ),
+                    patch.object(
+                        tm,
+                        "generate_final_videos",
+                        return_value=videos_result,
+                    ),
+                    patch.object(tm.sm, "state", state),
+                ):
+                    result = tm.start(f"failed-{stage}", params)
+
+                failed_task = state.get_task(f"failed-{stage}")
+                self.assertEqual(result, failed_task)
+                self.assertEqual(failed_task["state"], tm.const.TASK_STATE_FAILED)
+                self.assertEqual(failed_task["failed_stage"], stage)
+                self.assertTrue(failed_task["error"])
+
+    def test_start_records_unexpected_pipeline_exception(self):
+        """未预期异常也必须结束任务，并向 API 暴露原始异常类型和信息。"""
+        params = VideoParams(video_subject="Coffee")
+        state = MemoryState()
+
+        with (
+            patch.object(
+                tm,
+                "generate_script",
+                side_effect=RuntimeError("provider connection reset"),
+            ),
+            patch.object(tm.sm, "state", state),
+        ):
+            result = tm.start("unexpected-failure", params)
+
+        failed_task = state.get_task("unexpected-failure")
+        self.assertEqual(result, failed_task)
+        self.assertEqual(failed_task["state"], tm.const.TASK_STATE_FAILED)
+        self.assertEqual(failed_task["failed_stage"], "pipeline")
+        self.assertEqual(
+            failed_task["error"],
+            "RuntimeError: provider connection reset",
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+    @unittest.skipUnless(os.name == "nt", "Windows process API test")
+    def test_windows_process_probe_is_read_only_and_detects_liveness(self):
+        """Windows CI 应真实验证只读进程探测，不允许回退到 os.kill。"""
+        self.assertTrue(tm._is_windows_process_alive(os.getpid()))
+        self.assertFalse(tm._is_windows_process_alive(2_147_483_647))
+
+
+
+
+
+
+
+    @unittest.skipUnless(
+        RUN_INTEGRATION_TESTS,
+        "MPT_RUN_INTEGRATION_TESTS not set",
+    )
+    def test_task_local_materials(self):
+        task_id = "00000000-0000-0000-0000-000000000000"
+        video_materials=[]
+        for i in range(1, 4):
+            video_materials.append(MaterialInfo(
+                provider="local",
+                url=os.path.join(resources_dir, f"{i}.png"),
+                duration=0
+            ))
+
+        params = VideoParams(
+            video_subject="金钱的作用",
+            video_script="金钱不仅是交换媒介，更是社会资源的分配工具。它能满足基本生存需求，如食物和住房，也能提供教育、医疗等提升生活品质的机会。拥有足够的金钱意味着更多选择权，比如职业自由或创业可能。但金钱的作用也有边界，它无法直接购买幸福、健康或真诚的人际关系。过度追逐财富可能导致价值观扭曲，忽视精神层面的需求。理想的状态是理性看待金钱，将其作为实现目标的工具而非终极目的。",
+            video_terms="money importance, wealth and society, financial freedom, money and happiness, role of money",
+            video_aspect="9:16",
+            video_concat_mode="random",
+            video_transition_mode="None",
+            video_clip_duration=3,
+            video_count=1,
+            video_source="local",
+            video_materials=video_materials,
+            video_language="",
+            voice_name="zh-CN-XiaoxiaoNeural-Female",
+            voice_volume=1.0,
+            voice_rate=1.0,
+            bgm_type="random",
+            bgm_file="",
+            bgm_volume=0.2,
+            subtitle_enabled=True,
+            subtitle_position="bottom",
+            custom_position=70.0,
+            font_name="NotoSansSC.ttf",
+            text_fore_color="#FFFFFF",
+            text_background_color=True,
+            font_size=60,
+            stroke_color="#000000",
+            stroke_width=1.5,
+            n_threads=2,
+            paragraph_number=1
+        )
+        result = tm.start(task_id=task_id, params=params)
+        print(result)
+    
+
+if __name__ == "__main__":
+    unittest.main()

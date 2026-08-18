@@ -1,0 +1,16 @@
+# Keep legacy pip install support; primary deps moved to pyproject.toml / uv.lock.
+moviepy==2.2.1
+streamlit==1.59.1
+streamlit-tour==1.1.0
+fastapi==0.136.3
+uvicorn==0.32.1
+loguru==0.7.3
+redis==5.2.0
+python-multipart==0.0.27
+pyyaml==6.0.3
+toml==0.10.2
+requests==2.33.1
+packaging==24.2
+socksio==1.0.0
+pydub==0.25.1
+audioop-lts==0.2.2; python_version >= "3.13"

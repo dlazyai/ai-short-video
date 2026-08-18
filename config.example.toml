@@ -1,0 +1,135 @@
+# =============================================================================
+# Every model call in this project goes through dlazy: script, voice-over,
+# subtitles, footage and background music. There is exactly one credential to
+# set — `dlazy.api_key` below.
+# 本项目所有模型调用（文案、配音、字幕、素材、配乐）都走 dlazy，只需配置
+# 下面的 dlazy.api_key 一个凭据。
+# =============================================================================
+
+# Address and port the HTTP API binds to, and the log verbosity.
+# 这三项是顶层配置，必须写在任何 [section] 之前。
+listen_host = "0.0.0.0"
+listen_port = 8080
+log_level = "DEBUG"
+
+[dlazy]
+
+# Create a key at https://dlazy.com/dashboard/organization/api-key
+api_key = ""
+
+# Self-hosted deployments can point this elsewhere.
+base_url = "https://dlazy.com"
+
+# Writes the script and the video search terms.
+# ["claude-sonnet-5", "qwen3.8-max", "kimi-k3"]
+llm_model = "claude-sonnet-5"
+
+# Transcribes the rendered voice-over into subtitles.
+# ["fun-asr", "elevenlabs-stt"]
+asr_model = "fun-asr"
+
+# Source language for transcription. dlazy accepts "zh" or "en" only.
+asr_language = "zh"
+
+# Voice-over. ["qwen-tts", "doubao-tts", "elevenlabs-tts"]
+tts_model = "qwen-tts"
+# Voice id for the selected model; blank uses that model's default voice.
+tts_voice = ""
+
+# Footage. One clip is generated per search term and billed per clip, so
+# prefer a fast model unless you specifically want the slower, higher-fidelity
+# ones. ["seedance-2.0-fast", "seedance-2.0", "seedance-2.5", "veo-3.1-fast",
+#         "kling-v3", "wan2.7"]
+video_model = "seedance-2.0-fast"
+video_resolution = "720p"
+
+# Background music. `search_audio` picks a royalty-free track instead of
+# generating one, which is far cheaper.
+# ["elevenlabs-music", "suno-music", "search_audio"]
+music_model = "elevenlabs-music"
+
+
+[app]
+
+# -----------------------------------------------------------------------------
+# General / 通用设置
+# -----------------------------------------------------------------------------
+
+# Hide the basic configuration panel in the WebUI.
+hide_config = false
+
+# Verify TLS certificates for external APIs and downloads.
+# 默认应保持开启；仅在可信代理或自签名证书环境中临时关闭。
+tls_verify = true
+
+# -----------------------------------------------------------------------------
+# Video Materials / 视频素材
+# -----------------------------------------------------------------------------
+
+# "generated" 用 dlazy 视频模型按关键词生成片段；"local" 使用本地素材目录。
+# Available values: "generated", "local".
+video_source = "generated"
+
+# Directory holding local footage. Set to "task" to use each task's own folder.
+# Example: material_directory = "/path/to/videos"
+material_directory = ""
+
+# Generate one clip per search term in script order instead of shuffling.
+match_materials_to_script = false
+
+# -----------------------------------------------------------------------------
+# Rendering / 渲染
+# -----------------------------------------------------------------------------
+
+# ffmpeg is required. Leave empty to use the one on PATH.
+# Windows example: ffmpeg_path = "C:\path\to\ffmpeg.exe"
+# ffmpeg_path = ""
+
+# video_codec = "libx264"
+
+# -----------------------------------------------------------------------------
+# API server / 接口服务
+# -----------------------------------------------------------------------------
+
+# Bearer token required by the HTTP API. Leave empty to disable auth.
+api_key = ""
+
+# Public endpoint used when building result URLs.
+endpoint = ""
+
+
+max_concurrent_tasks = 5
+max_queued_tasks = 100
+
+enable_redis = false
+redis_host = "localhost"
+redis_port = 6379
+redis_db = 0
+redis_password = ""
+
+
+[proxy]
+# Optional proxy for dlazy calls and media downloads.
+# Format: "http://<username>:<password>@<proxy>:<port>"
+# Documentation: https://requests.readthedocs.io/en/latest/user/advanced/#proxies
+# http = "http://127.0.0.1:3128"
+# https = "http://127.0.0.1:1080"
+
+
+[ui]
+# Hide generation logs in the WebUI.
+hide_log = false
+
+# Open the task folder automatically after video generation completes.
+open_task_folder_on_completion = true
+
+# The WebUI writes the remaining preferences automatically. Uncomment values
+# below only when you want to define initial defaults manually.
+# language = "zh"
+# tts_server = "qwen-tts"
+# voice_name = ""
+# font_name = "NotoSansSC.ttf"
+# font_size = 60
+# text_fore_color = "#FFFFFF"
+# subtitle_position = "bottom" # "top", "center", "bottom", or "custom"
+# custom_position = 70.0       # Percentage from the top when using "custom"
