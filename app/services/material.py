@@ -450,23 +450,38 @@ def _download_stock_videos(
     match_script_order: bool,
     material_directory: str,
 ) -> List[str]:
-    """Collect stock clips until the narration is covered."""
-    candidates: List[MaterialInfo] = []
+    """Collect stock clips until the narration is covered.
+
+    The library returns each term's hits ranked by relevance, so the order
+    inside a term carries real signal. Pooling every term's hits and shuffling
+    the lot throws that away: searching "body recovery" puts a fitness clip
+    first and a scrapyard fourth, and a blind shuffle picks the scrapyard as
+    readily as the fitness clip. So pick round-robin across terms, taking each
+    term's best remaining hit first — every term gets screen time and the top
+    match wins within it. `video_concat_mode` then decides the order the chosen
+    clips appear in, which is a separate question from which clips to use.
+    """
+    ranked: List[List[MaterialInfo]] = []
     seen = set()
     for term in search_terms:
+        bucket: List[MaterialInfo] = []
         for item in search_stock_videos(term, video_aspect, max_clip_duration):
             if item.url in seen:
                 continue
             seen.add(item.url)
-            candidates.append(item)
+            bucket.append(item)
+        if bucket:
+            ranked.append(bucket)
 
-    if not candidates:
+    if not ranked:
         logger.error("stock search returned no usable clips")
         return []
 
-    concat_mode_value = getattr(video_concat_mode, "value", video_concat_mode)
-    if not match_script_order and concat_mode_value == VideoConcatMode.random.value:
-        random.shuffle(candidates)
+    candidates: List[MaterialInfo] = []
+    for rank in range(max(len(b) for b in ranked)):
+        for bucket in ranked:
+            if rank < len(bucket):
+                candidates.append(bucket[rank])
 
     video_paths: List[str] = []
     material_sources: List[dict] = []
@@ -490,6 +505,11 @@ def _download_stock_videos(
         total += min(max_clip_duration, item.duration)
         if total >= audio_duration:
             break
+
+    # 顺序由 concat_mode 决定，且只作用于已经按相关性选出来的这几片。
+    concat_mode_value = getattr(video_concat_mode, "value", video_concat_mode)
+    if not match_script_order and concat_mode_value == VideoConcatMode.random.value:
+        random.shuffle(video_paths)
 
     logger.success(f"downloaded {len(video_paths)} stock clip(s)")
     _persist_material_sources(task_id, material_sources)
