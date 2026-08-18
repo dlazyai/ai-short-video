@@ -134,7 +134,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
         epilog="""
 Examples:
-  Generate a complete video with the default Edge TTS voice:
+  Generate a complete video with the default voice:
     uv run python cli.py --video-subject "How AI is changing everyday life"
 
   Generate from local files. Relative paths use the current working directory;
@@ -285,8 +285,8 @@ Output and exit status:
         "--voice-name",
         default=DEFAULT_VOICE_NAME,
         help=(
-            "TTS voice identifier; use 'no-voice' for silent output. Provider-specific "
-            "identifiers use prefixes such as gemini:, mimo:, elevenlabs:, and chatterbox:"
+            "TTS voice as '<tts-model>:<voice>', e.g. qwen-tts:Cherry; "
+            "use 'no-voice' for silent output"
         ),
     )
     audio_group.add_argument(
@@ -311,8 +311,8 @@ Output and exit status:
         metavar="PATH",
         help=(
             "existing MP3/WAV/M4A/AAC/FLAC/OGG voiceover; relative paths use the "
-            "current working directory. This skips TTS; set subtitle_provider=whisper "
-            "to transcribe it"
+            "current working directory. This skips TTS; subtitles are still "
+            "transcribed from it"
         ),
     )
     audio_group.add_argument(

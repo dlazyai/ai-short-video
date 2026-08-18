@@ -86,7 +86,7 @@ def test_full_voiceover_preview_is_disabled_until_script_exists():
     test_ui = dict(
         config.ui,
         voice_mode="tts",
-        tts_server="azure-tts-v1",
+        tts_server="qwen-tts",
         voice_name="zh-CN-XiaoxiaoNeural-Female",
     )
     with (
@@ -110,7 +110,7 @@ def test_script_shows_estimate_and_enables_full_voiceover_preview():
     test_ui = dict(
         config.ui,
         voice_mode="tts",
-        tts_server="azure-tts-v1",
+        tts_server="qwen-tts",
         voice_name="zh-CN-XiaoxiaoNeural-Female",
     )
     with (
@@ -140,7 +140,7 @@ def test_full_preview_uses_script_and_reuses_identical_cached_audio():
     test_ui = dict(
         config.ui,
         voice_mode="tts",
-        tts_server="azure-tts-v1",
+        tts_server="qwen-tts",
         voice_name="zh-CN-XiaoxiaoNeural-Female",
     )
 
@@ -184,7 +184,7 @@ def test_full_preview_reports_when_tts_returns_no_audio():
     test_ui = dict(
         config.ui,
         voice_mode="tts",
-        tts_server="azure-tts-v1",
+        tts_server="qwen-tts",
         voice_name="zh-CN-XiaoxiaoNeural-Female",
     )
     with (
@@ -212,7 +212,7 @@ def test_full_preview_returns_immediately_when_runtime_config_is_busy():
     test_ui = dict(
         config.ui,
         voice_mode="tts",
-        tts_server="azure-tts-v1",
+        tts_server="qwen-tts",
         voice_name="zh-CN-XiaoxiaoNeural-Female",
     )
     with (
@@ -244,7 +244,7 @@ def test_full_preview_warns_when_audio_duration_is_unavailable():
     test_ui = dict(
         config.ui,
         voice_mode="tts",
-        tts_server="azure-tts-v1",
+        tts_server="qwen-tts",
         voice_name="zh-CN-XiaoxiaoNeural-Female",
     )
 

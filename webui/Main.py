@@ -178,13 +178,6 @@ def _run_llm_read_operation(operation_name, operation):
     return operation(app_config_snapshot)
 
 
-def _parse_chatterbox_voices(voices):
-    # Chatterbox 是自托管服务，音色列表由用户在 WebUI 中手动输入。
-    # 这里统一兼容 TOML 数组和输入框里的逗号分隔字符串，避免下拉框、
-    # 试听按钮和后续生成流程使用不同格式导致状态不一致。
-    if isinstance(voices, str):
-        return [v.strip() for v in voices.split(",") if v.strip()]
-    return [str(v).strip() for v in voices or [] if str(v).strip()]
 
 
 
@@ -2584,7 +2577,7 @@ def _get_reusable_full_voice_preview(params, voice_mode: str) -> dict | None:
         return None
 
     script_content = str(params.video_script or "").strip()
-    selected_tts_server = config.ui.get("tts_server", "azure-tts-v1")
+    selected_tts_server = config.ui.get("tts_server", voice.DEFAULT_TTS_MODEL)
     if (
         not script_content
         or not params.voice_name
@@ -2635,23 +2628,8 @@ def _get_reusable_full_voice_preview(params, voice_mode: str) -> dict | None:
 
 
 
-def _get_cached_minimax_voices(api_key: str, endpoint: str) -> list[dict[str, str]]:
-    """按站点和凭证摘要读取当前会话中的 MiniMax 音色查询结果。"""
-    cache = st.session_state.get("minimax_tts_voice_catalog_cache", {})
-    cache_key = f"{endpoint}|{_credential_signature(api_key)}"
-    cached_voices = cache.get(cache_key, [])
-    return cached_voices if isinstance(cached_voices, list) else []
 
 
-def _cache_minimax_voices(
-    api_key: str,
-    endpoint: str,
-    voices: list[dict[str, str]],
-):
-    """缓存主动查询到的音色，避免普通控件 rerun 后重复请求 MiniMax。"""
-    cache = st.session_state.setdefault("minimax_tts_voice_catalog_cache", {})
-    cache_key = f"{endpoint}|{_credential_signature(api_key)}"
-    cache[cache_key] = voices
 
 
 
@@ -2819,7 +2797,7 @@ def _render_audio_settings(panel, params):
 
             # 配音方式是音频设置的一级状态，负责明确区分自动配音、用户上传和无配音。
             # 旧配置没有 voice_mode 时，根据原 tts_server 的无配音哨兵保持兼容。
-            saved_tts_server = config.ui.get("tts_server", "azure-tts-v1")
+            saved_tts_server = config.ui.get("tts_server", voice.DEFAULT_TTS_MODEL)
             saved_voice_mode = config.ui.get("voice_mode")
             if saved_voice_mode not in {
                 VOICE_MODE_TTS,

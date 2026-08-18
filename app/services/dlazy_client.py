@@ -85,15 +85,41 @@ def upload_file(path: str) -> str:
     return data["publicUrl"]
 
 
+# A long generation is polled for minutes. A proxy or flaky link can abort a
+# single poll, and giving up there would discard work that is already paid for
+# and probably finished server-side — so transient errors are retried.
+POLL_MAX_CONSECUTIVE_ERRORS = 5
+
+
 def _poll(generate_id: str, timeout: int):
     deadline = time.time() + timeout
     url = f"{base_url()}/api/cli/tool?generateId={generate_id}"
+    errors = 0
     while time.time() < deadline:
         time.sleep(POLL_INTERVAL)
-        resp = requests.get(url, headers=_headers(), timeout=60)
-        if not resp.ok:
-            raise DlazyError(f"poll failed ({resp.status_code}): {resp.text[:300]}")
-        data = resp.json()
+        try:
+            resp = requests.get(url, headers=_headers(), timeout=60)
+            if not resp.ok:
+                raise DlazyError(
+                    f"poll failed ({resp.status_code}): {resp.text[:300]}"
+                )
+            data = resp.json()
+        except DlazyError:
+            raise
+        except Exception as e:
+            errors += 1
+            if errors >= POLL_MAX_CONSECUTIVE_ERRORS:
+                raise DlazyError(
+                    f"task {generate_id}: polling failed {errors} times in a row: {e}"
+                ) from e
+            logger.warning(
+                f"transient error polling {generate_id} "
+                f"({errors}/{POLL_MAX_CONSECUTIVE_ERRORS}): {e}"
+            )
+            time.sleep(POLL_INTERVAL * errors)
+            continue
+
+        errors = 0
         status = data.get("status")
         if status == "completed":
             return data.get("result")

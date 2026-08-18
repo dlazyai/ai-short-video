@@ -104,7 +104,6 @@ class VideoParams(BaseModel):
     # 视频配乐供应商共用提示词，WebUI 新任务统一写入该字段。保留下面的
     # Sonilo 专用字段以兼容旧任务记录和现有 CLI 参数。
     video_music_prompt: str = Field(default="", max_length=2000)
-    sonilo_bgm_prompt: str = Field(default="", max_length=2000)
 
     subtitle_enabled: Optional[bool] = True
     subtitle_position: Optional[str] = config.ui.get("subtitle_position", "bottom")  # top, bottom, center, custom
