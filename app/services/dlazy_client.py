@@ -236,6 +236,25 @@ def list_voices(model: str):
     return list(field.get("enum") or []), field.get("default") or ""
 
 
+def prompt_limit(model: str):
+    """Return the tool's declared `prompt` character cap, or None if it has none.
+
+    The TTS tools cap the prompt at wildly different lengths (qwen-tts at 512,
+    doubao-tts at 1000, elevenlabs-tts at 5000) and reject the whole call with a
+    400 when it is exceeded. The manifest already carries the number, so read it
+    rather than hardcoding a guess that goes stale.
+    """
+    tool = _tool(model)
+    if not tool:
+        return None
+    props = (tool.get("inputJsonSchema") or {}).get("properties") or {}
+    limit = (props.get("prompt") or {}).get("maxLength")
+    try:
+        return int(limit) if limit else None
+    except (TypeError, ValueError):
+        return None
+
+
 def available_models(cli_names) -> list:
     """Filter a candidate model list down to what this account can actually run."""
     try:

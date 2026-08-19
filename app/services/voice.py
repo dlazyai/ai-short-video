@@ -257,6 +257,106 @@ def _build_tts_payload(model: str, text: str, voice: str) -> dict:
     raise ValueError(f"unsupported dlazy TTS model: {model}")
 
 
+def _split_for_tts(text: str, limit: int) -> list:
+    """Break narration into pieces that each fit the model's prompt cap.
+
+    Prefer sentence boundaries so the seams land where a speaker would pause;
+    fall back to clause punctuation, then to a hard cut, so a run-on sentence
+    longer than the cap still gets through instead of failing the whole task.
+    """
+    text = (text or "").strip()
+    if not text or len(text) <= limit:
+        return [text] if text else []
+
+    chunks, buf = [], ""
+    # Keep the delimiter attached to the sentence it ends.
+    for piece in re.split(r"(?<=[。！？!?\.\n])", text):
+        if not piece:
+            continue
+        if len(buf) + len(piece) <= limit:
+            buf += piece
+            continue
+        if buf:
+            chunks.append(buf.strip())
+            buf = ""
+        if len(piece) <= limit:
+            buf = piece
+            continue
+        # A single sentence over the cap: split on clause marks, then hard-cut.
+        for clause in re.split(r"(?<=[，,；;：:])", piece):
+            if len(buf) + len(clause) <= limit:
+                buf += clause
+                continue
+            if buf:
+                chunks.append(buf.strip())
+                buf = ""
+            while len(clause) > limit:
+                chunks.append(clause[:limit].strip())
+                clause = clause[limit:]
+            buf = clause
+    if buf.strip():
+        chunks.append(buf.strip())
+    return [c for c in chunks if c]
+
+
+def _concat_audio(parts: list, out_file: str) -> None:
+    """Join the rendered parts end to end.
+
+    Re-encodes rather than stream-copying: the parts arrive in whatever format
+    the TTS model returns (qwen-tts hands back wav) while `out_file` is the
+    pipeline's `.mp3`, and copying a pcm stream into an mp3 container fails with
+    "Exactly one MP3 audio stream is required". Letting ffmpeg pick the encoder
+    from the extension keeps the output consistent with the single-chunk path.
+    """
+    list_file = f"{out_file}.concat.txt"
+    with open(list_file, "w", encoding="utf-8") as fh:
+        for p in parts:
+            fh.write(f"file '{os.path.abspath(p)}'\n")
+    cmd = [
+        utils.get_ffmpeg_binary(), "-y", "-loglevel", "error",
+        "-f", "concat", "-safe", "0", "-i", list_file, out_file,
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+    finally:
+        if os.path.exists(list_file):
+            os.remove(list_file)
+
+
+def _synthesize(model: str, text: str, voice: str, voice_file: str) -> None:
+    """Render `text` to `voice_file`, splitting it if the model caps the prompt.
+
+    The cap is per call, not per task: qwen-tts stops at 512 characters, which a
+    normal one-paragraph script clears easily, and the API rejects the whole
+    request rather than truncating.
+    """
+    limit = dlazy_client.prompt_limit(model)
+    chunks = _split_for_tts(text, limit) if limit else [text]
+    if len(chunks) > 1:
+        logger.info(f"narration is {len(text)} chars; splitting into {len(chunks)} TTS calls")
+
+    parts = []
+    try:
+        for i, chunk in enumerate(chunks):
+            output = dlazy_client.run_tool(model, _build_tts_payload(model, chunk, voice))
+            urls = (output or {}).get("urls") or []
+            if not urls:
+                raise ValueError(f"[{model}] returned no audio url")
+            part = f"{voice_file}.part{i}" if len(chunks) > 1 else f"{voice_file}.download"
+            dlazy_client.download(urls[0], part)
+            parts.append(part)
+
+        if len(parts) == 1:
+            # The pipeline downstream (moviepy, pydub) expects the configured path.
+            os.replace(parts[0], voice_file)
+        else:
+            _concat_audio(parts, voice_file)
+    finally:
+        for p in parts:
+            if os.path.exists(p):
+                os.remove(p)
+
+
 def _apply_voice_rate(audio_file: str, voice_rate: float) -> None:
     """Re-time the rendered audio with ffmpeg's atempo.
 
@@ -318,15 +418,7 @@ def tts(
     ensure_file_path_exists(voice_file)
 
     try:
-        output = dlazy_client.run_tool(model, _build_tts_payload(model, text, voice))
-        urls = (output or {}).get("urls") or []
-        if not urls:
-            raise ValueError(f"[{model}] returned no audio url")
-
-        raw = f"{voice_file}.download"
-        dlazy_client.download(urls[0], raw)
-        # The pipeline downstream (moviepy, pydub) expects the configured path.
-        os.replace(raw, voice_file)
+        _synthesize(model, text, voice, voice_file)
         _apply_voice_rate(voice_file, voice_rate)
     except Exception as e:
         logger.error(f"tts failed: {e}")

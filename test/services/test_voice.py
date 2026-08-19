@@ -246,7 +246,89 @@ class TestVoiceService(unittest.TestCase):
 
 
 
+class TestTtsPromptSplitting(unittest.TestCase):
+    """dlazy 的 TTS 工具对 prompt 有长度上限，超了会整次调用报 400。
+
+    qwen-tts 是 512 字符，一段普通的单段文案就能超过；上限是按次调用算的，
+    所以必须先把文稿切开再逐段合成，否则整个任务在 audio 阶段就失败了。
+    """
+
+    LIMIT = 512
+
+    def test_short_text_is_not_split(self):
+        self.assertEqual(vs._split_for_tts("只有一句话。", self.LIMIT), ["只有一句话。"])
+
+    def test_empty_text_yields_no_chunks(self):
+        self.assertEqual(vs._split_for_tts("", self.LIMIT), [])
+        self.assertEqual(vs._split_for_tts("   ", self.LIMIT), [])
+
+    def test_chunks_stay_within_limit(self):
+        text = "这是一句用来测试的话。" * 80
+        chunks = vs._split_for_tts(text, self.LIMIT)
+        self.assertGreater(len(chunks), 1)
+        for c in chunks:
+            self.assertLessEqual(len(c), self.LIMIT)
+
+    def test_split_preserves_content(self):
+        text = "First sentence here. Second sentence follows. " * 20
+        chunks = vs._split_for_tts(text, self.LIMIT)
+        # 只在空白处收尾，所以去掉空白后内容必须完全一致。
+        self.assertEqual(
+            "".join(chunks).replace(" ", ""), text.replace(" ", "").strip()
+        )
+
+    def test_run_on_sentence_is_hard_cut(self):
+        # 没有任何标点的超长串：切不到句界也不能整段送出去。
+        text = "啊" * (self.LIMIT * 2 + 30)
+        chunks = vs._split_for_tts(text, self.LIMIT)
+        self.assertEqual(len(chunks), 3)
+        for c in chunks:
+            self.assertLessEqual(len(c), self.LIMIT)
+        self.assertEqual("".join(chunks), text)
+
+    def test_synthesize_issues_one_call_per_chunk(self):
+        text = "这是一句用来测试的话。" * 80
+        calls = []
+
+        def fake_run_tool(model, payload, **kwargs):
+            calls.append(payload["prompt"])
+            return {"urls": [f"https://example.invalid/{len(calls)}.wav"]}
+
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "audio.mp3")
+            with patch.object(vs.dlazy_client, "prompt_limit", return_value=self.LIMIT), \
+                 patch.object(vs.dlazy_client, "run_tool", side_effect=fake_run_tool), \
+                 patch.object(vs.dlazy_client, "download",
+                              side_effect=lambda url, path: Path(path).write_bytes(b"x")), \
+                 patch.object(vs, "_concat_audio") as concat:
+                vs._synthesize("qwen-tts", text, "Cherry", out)
+
+            self.assertGreater(len(calls), 1)
+            for prompt in calls:
+                self.assertLessEqual(len(prompt), self.LIMIT)
+            # 分块时必须走拼接，而不是只留下最后一段。
+            concat.assert_called_once()
+            self.assertEqual(len(concat.call_args[0][0]), len(calls))
+
+    def test_synthesize_without_declared_limit_sends_one_call(self):
+        calls = []
+
+        def fake_run_tool(model, payload, **kwargs):
+            calls.append(payload["prompt"])
+            return {"urls": ["https://example.invalid/1.wav"]}
+
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "audio.mp3")
+            with patch.object(vs.dlazy_client, "prompt_limit", return_value=None), \
+                 patch.object(vs.dlazy_client, "run_tool", side_effect=fake_run_tool), \
+                 patch.object(vs.dlazy_client, "download",
+                              side_effect=lambda url, path: Path(path).write_bytes(b"x")):
+                vs._synthesize("elevenlabs-tts", "随便一段话。" * 200, "v", out)
+
+            self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     # python -m unittest test.services.test_voice.TestVoiceService.test_azure_tts_v1
     # python -m unittest test.services.test_voice.TestVoiceService.test_azure_tts_v2
-    unittest.main() 
+    unittest.main()
