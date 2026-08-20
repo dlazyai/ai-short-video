@@ -34,7 +34,7 @@ class TestConfigPersistence:
         assert example_config["listen_host"] == "0.0.0.0"
         assert example_config["listen_port"] == 8080
         assert example_config["log_level"] == "DEBUG"
-        assert app_config["video_source"] in {"generated", "local"}
+        assert app_config["video_source"] in {"stock", "generated", "local"}
         assert "match_materials_to_script" in app_config
         assert example_config["dlazy"]["llm_model"]
 
